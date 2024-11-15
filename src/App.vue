@@ -65,6 +65,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader'
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader'
+import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
 import {
   AppLoadingSpinner,
@@ -80,10 +81,10 @@ import {
 } from '@ownclouders/web-pkg'
 import { Resource } from '@ownclouders/web-client/src'
 import PreviewControls from './components/PreviewControls.vue'
+import { supportedExtensions, supportedMimeTypes } from './mimeTypes'
 import { id as appId } from '../public/manifest.json'
 
 const environment = new URL('./assets/custom_light.jpg', import.meta.url).href
-const supportExtensions = ['glb', 'stl', 'fbx', 'obj']
 
 const router = useRouter()
 const route = useRoute()
@@ -100,7 +101,6 @@ let iniCamPosition: Vector3 | null = null
 let iniCamZPosition: number = 0
 const iniCamRotation: Euler = new Euler(0, 0, 0)
 const animTimeoutSec = 1
-const debugIsEnabled = false
 
 // =====================
 // props
@@ -155,13 +155,13 @@ onMounted(async () => {
       await renderModel(unref(fileType))
       loadLights()
     } catch (e) {
-      cleanup3dScene()
+      teardown3dScene()
       hasError.value = true
     }
   }
 })
 onBeforeUnmount(() => {
-  cleanup3dScene()
+  teardown3dScene()
 })
 
 // =====================
@@ -186,7 +186,10 @@ const modelFiles = computed<Resource[]>(() => {
   }
 
   const files = unref(activeFiles).filter((file: Resource) => {
-    return supportExtensions.includes(file.extension?.toLowerCase())
+    return (
+      supportedExtensions.includes(file.extension?.toLowerCase()) &&
+      supportedMimeTypes.includes(file.mimeType?.toLowerCase())
+    )
   })
 
   return sortHelper(files, [{ name: unref(sortBy) }], unref(sortBy), unref(sortDir))
@@ -214,7 +217,8 @@ const LoaderMap = {
   glb: GLTFLoader,
   stl: STLLoader,
   fbx: FBXLoader,
-  obj: OBJLoader
+  obj: OBJLoader,
+  ply: PLYLoader
 }
 
 const materialParams = {
@@ -243,10 +247,12 @@ async function renderModel(extension: string) {
     }
   })
 
-  debug(model)
+  if (import.meta.env.MODE === 'development') {
+    debug(model)
+  }
 
   const box = new Box3()
-  if (!model.hasOwnProperty('scene') && extension === 'stl') {
+  if (!model.hasOwnProperty('scene') && ['stl', 'ply'].includes(extension)) {
     const mesh = new Mesh(model, defaultMaterial())
     scene.add(mesh)
     box.setFromBufferAttribute(model.attributes.position)
@@ -322,8 +328,18 @@ async function renderNewModel() {
   await renderModel(unref(fileType))
 }
 
-function cleanup3dScene() {
+function unloadCurrentModel(): void {
+  for (let i = scene.children.length - 1; i >= 0; i--) {
+    let obj = scene.children[i]
+    if (unref(obj.type) === 'Group' || unref(obj.type) === 'Mesh') {
+      scene.remove(obj)
+    }
+  }
+}
+
+function teardown3dScene() {
   cancelAnimationFrame(unref(animationId))
+  unloadCurrentModel()
   renderer.dispose()
 }
 
@@ -375,7 +391,7 @@ async function next() {
   }
 
   updateLocalHistory()
-  await unloadModels()
+  unloadCurrentModel()
   // TODO: how to prevent activeFiles from being reduced
   // load activeFiles
   await loadFolderForFileContext(unref(currentFileContext))
@@ -394,20 +410,11 @@ async function prev() {
   }
 
   updateLocalHistory()
-  await unloadModels()
+  unloadCurrentModel()
   // TODO: how to prevent activeFiles from being reduced
   // load activeFiles
   await loadFolderForFileContext(unref(currentFileContext))
   await renderNewModel()
-}
-
-async function unloadModels(): Promise<void> {
-  for (let i = scene.children.length - 1; i >= 0; i--) {
-    let obj = scene.children[i]
-    if (unref(obj.type) === 'Group' || unref(obj.type) === 'Mesh') {
-      scene.remove(obj)
-    }
-  }
 }
 
 function toggleFullscreenMode() {
@@ -434,13 +441,11 @@ function resetModelPosition() {
   }
 }
 
-function debug(output) {
-  if (debugIsEnabled) {
-    scene.add(new AxesHelper(10))
-    console.log('####### DEBUG 3D MODEL #######')
-    console.log(output)
-    console.log('#####################')
-  }
+function debug(model: object) {
+  scene.add(new AxesHelper(10))
+  console.log('####### DEBUG 3D MODEL #######')
+  console.log(model)
+  console.log('#####################')
 }
 </script>
 
